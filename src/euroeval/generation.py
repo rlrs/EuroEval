@@ -4,6 +4,7 @@ import collections.abc as c
 import logging
 import sys
 import typing as t
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import more_itertools as mit
@@ -158,7 +159,25 @@ def generate_single_iteration(
 
         # Generate the completions for the non-cached examples
         for batch in itr:
-            assert isinstance(batch, dict)
+            if isinstance(batch, Mapping):
+                batch = dict(batch)
+            elif isinstance(batch, Sequence) and not isinstance(batch, (str, bytes)):
+                batch_sequence = list(batch)
+                if len(batch_sequence) == 0:
+                    continue
+                if not all(isinstance(sample, Mapping) for sample in batch_sequence):
+                    raise TypeError(
+                        "Batched dataset samples must be mappings to build model inputs."
+                    )
+                first_sample = batch_sequence[0]
+                batch = {
+                    key: [sample[key] for sample in batch_sequence]
+                    for key in first_sample.keys()
+                }
+            else:
+                raise TypeError(
+                    f"Unsupported batch type {type(batch)!r}; expected mapping or sequence of mappings."
+                )
 
             single_sample_batch = (
                 "text" in batch and isinstance(batch["text"], str)

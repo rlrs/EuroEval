@@ -88,6 +88,7 @@ class Benchmarker:
         run_with_cli: bool = False,
         requires_safetensors: bool = False,
         download_only: bool = False,
+        is_base_model: bool = False,
     ) -> None:
         """Initialise the benchmarker.
 
@@ -232,11 +233,25 @@ class Benchmarker:
             force=force,
             debug=debug,
             run_with_cli=run_with_cli,
+            is_base_model=is_base_model,
         )
 
         self.benchmark_config = build_benchmark_config(
             benchmark_config_params=self.benchmark_config_default_params
         )
+
+        self.is_base_model = is_base_model
+
+        if (
+            self.benchmark_config.generative_type is None
+            and self.benchmark_config.is_base_model
+        ):
+            self.benchmark_config.generative_type = GenerativeType.BASE
+        elif (
+            self.benchmark_config.generative_type is None
+            and not self.benchmark_config.is_base_model
+        ):
+            self.benchmark_config.generative_type = GenerativeType.INSTRUCTION_TUNED
 
         # Initialise variable storing model lists, so we only have to fetch it once
         self._model_lists: dict[str, c.Sequence[str]] | None = None

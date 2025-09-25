@@ -1,6 +1,7 @@
 """Generative models from an inference API, using the LiteLLM framework."""
 
 import asyncio
+import os
 import collections.abc as c
 import json
 import logging
@@ -1230,6 +1231,9 @@ class LiteLLMModel(BenchmarkModule):
             Whether the model exists, or an error describing why we cannot check
             whether the model exists.
         """
+        if os.getenv("EUROEVAL_GATEWAY_MODE"):
+            return False
+
         model_id = split_model_id(model_id=model_id).model_id
         if model_id in litellm.model_list:
             return True

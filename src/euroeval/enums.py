@@ -48,11 +48,14 @@ class InferenceBackend(AutoStrEnum):
             VLLM library.
         LITELLM:
             LiteLLM library.
+        GATEWAY:
+            Gateway bridge used for external request/response orchestration.
     """
 
     TRANSFORMERS = auto()
     VLLM = auto()
     LITELLM = auto()
+    GATEWAY = auto()
 
 
 class ModelType(AutoStrEnum):

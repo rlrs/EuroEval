@@ -1,6 +1,7 @@
 """Functions related to getting the model configuration."""
 
 import logging
+import os
 import typing as t
 
 from . import benchmark_modules
@@ -29,6 +30,17 @@ def get_model_config(
         InvalidModel:
             If all model setups can handle the model, but the model does not exist.
     """
+    # If gateway mode is active we force the GatewayModel path
+    if os.getenv("EUROEVAL_GATEWAY_MODE"):
+        gateway_cls = benchmark_modules.GatewayModel
+        if gateway_cls.model_exists(model_id=model_id, benchmark_config=benchmark_config):
+            logger.debug(
+                "Gateway mode detected; forcing GatewayModel for %s", model_id
+            )
+            return gateway_cls.get_model_config(
+                model_id=model_id, benchmark_config=benchmark_config
+            )
+
     all_benchmark_modules = [
         cls
         for cls in benchmark_modules.__dict__.values()

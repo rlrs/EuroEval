@@ -106,6 +106,7 @@ def benchmark_config(
         run_with_cli=True,
         requires_safetensors=False,
         download_only=False,
+        is_base_model=False,
     )
 
 

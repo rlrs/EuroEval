@@ -535,6 +535,7 @@ class BenchmarkConfig:
     verbose: bool
     debug: bool
     run_with_cli: bool
+    is_base_model: bool
 
     @property
     def tasks(self) -> c.Sequence[Task]:
@@ -576,6 +577,7 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     verbose: bool
     debug: bool
     run_with_cli: bool
+    is_base_model: bool = False
 
 
 class BenchmarkResult(pydantic.BaseModel):
