@@ -259,6 +259,7 @@ class BenchmarkConfig:
     verbose: bool
     debug: bool
     run_with_cli: bool
+    is_base_model: bool
 
 
 class BenchmarkConfigParams(pydantic.BaseModel):
@@ -293,6 +294,7 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     verbose: bool
     debug: bool
     run_with_cli: bool
+    is_base_model: bool = False
 
 
 class BenchmarkResult(pydantic.BaseModel):
