@@ -44,6 +44,37 @@ if t.TYPE_CHECKING:
 logger = logging.getLogger("euroeval")
 
 
+def _strip_trailing_prompt_whitespace(batch: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Remove trailing spaces/tabs from prompt-related fields.
+
+    Few-shot exemplars end in tokens like " ja", but the actual example to predict
+    on previously had "Grammatisk korrekt: " with a trailing space. This caused the
+    tokenizer to see a different prefix for the final example compared to the few-shot
+    answers. Trimming spaces and tabs keeps the colon while letting the model generate
+    the leading-space token consistently.
+    """
+
+    def _clean(values: list[t.Any]) -> list[t.Any]:
+        return [value.rstrip(" \t") if isinstance(value, str) else value for value in values]
+
+    for field in ("text", "prompt"):
+        if field in batch and batch[field] is not None:
+            batch[field] = _clean(batch[field])
+    return batch
+
+
+def _normalise_response_text(text: str, *, uses_structured_output: bool) -> str:
+    """Normalise model responses before downstream parsing.
+
+    Token-classification datasets expect JSON output; leading whitespace here can cause
+    the JSON extractor to fail, so we only trim whitespace characters in that case.
+    Other tasks historically rely on `JSON_STRIP_CHARACTERS` to tame various wrappers,
+    so we keep that behaviour when structured output is not used.
+    """
+
+    return text.strip() if uses_structured_output else text.strip(JSON_STRIP_CHARACTERS)
+
+
 class GatewayModel(BenchmarkModule):
     """Benchmark module that records requests or replays responses."""
 
@@ -159,6 +190,13 @@ class GatewayModel(BenchmarkModule):
                 always_populate_text_field=False,
                 tokeniser=None,
             ),
+            batched=True,
+            load_from_cache_file=False,
+            keep_in_memory=True,
+        )
+
+        dataset["test"] = dataset["test"].map(
+            _strip_trailing_prompt_whitespace,
             batched=True,
             load_from_cache_file=False,
             keep_in_memory=True,
@@ -453,5 +491,10 @@ class GatewayModel(BenchmarkModule):
         for sequence in sequences:
             raw_text = str(sequence)
             text = self._handle_classification_json(raw_text)
-            processed.append(text.strip(JSON_STRIP_CHARACTERS))
+            processed.append(
+                _normalise_response_text(
+                    text,
+                    uses_structured_output=self.dataset_config.task.uses_structured_output,
+                )
+            )
         return processed

@@ -32,6 +32,22 @@ if t.TYPE_CHECKING:
         ModelConfig,
     )
 
+logger = logging.getLogger("euroeval")
+
+_generation_observer: t.Callable[..., None] | None = None
+
+
+def register_generation_observer(observer: t.Callable[..., None] | None) -> None:
+    """Register a callback that observes generation outputs.
+
+    Args:
+        observer:
+            Callable invoked after each generation iteration. Pass ``None`` to clear.
+    """
+
+    global _generation_observer
+    _generation_observer = observer
+
 
 def generate(
     model: "BenchmarkModule",
@@ -266,6 +282,22 @@ def generate_single_iteration(
         dataset=dataset,
         benchmark_config=benchmark_config,
     )
+
+    observer = _generation_observer
+    if observer is not None:
+        try:
+            observer(
+                dataset_config=dataset_config,
+                dataset=dataset,
+                benchmark_config=benchmark_config,
+                predictions=all_preds,
+                references=ground_truth,
+            )
+        except Exception:  # pragma: no cover - observer errors should not break eval
+            logger.debug(
+                "generation_observer_failed",
+                exc_info=True,
+            )
 
     return itr_scores
 
