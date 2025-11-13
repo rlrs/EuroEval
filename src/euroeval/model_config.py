@@ -11,6 +11,8 @@ from .logging_utils import log
 if t.TYPE_CHECKING:
     from .data_models import BenchmarkConfig, ModelConfig
 
+logger = logging.getLogger("euroeval")
+
 
 def get_model_config(
     model_id: str, benchmark_config: "BenchmarkConfig"
