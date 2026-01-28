@@ -15,7 +15,8 @@ TRANSLATION_TEMPLATES: dict["Language", PromptConfig] = {
         ),
         default_prompt_template="English: {text}\nDanish: {target_text}",
         default_instruction_prompt=(
-            "English: {text}\n\nTranslate the above into Danish."
+            "English: {text}\n\nTranslate the above into Danish. Respond with only "
+            "the Danish translation."
         ),
         default_prompt_label_mapping=dict(),
     ),
@@ -24,7 +25,8 @@ TRANSLATION_TEMPLATES: dict["Language", PromptConfig] = {
             "Følgende er engelske sætninger med danske oversættelser."
         ),
         default_prompt_template="Engelsk: {text}\nDansk: {target_text}",
-        default_instruction_prompt="Engelsk: {text}\n\nOversæt ovenstående til dansk.",
+        default_instruction_prompt="Engelsk: {text}\n\nOversæt ovenstående til dansk. "
+        "Svar kun med den danske oversættelse.",
         default_prompt_label_mapping=dict(),
     ),
 }
