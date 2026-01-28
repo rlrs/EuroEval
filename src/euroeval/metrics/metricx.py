@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import torch
 from transformers import AutoTokenizer, MT5Config
-from transformers.models.mt5.modeling_mt5 import MT5ForConditionalGeneration, MT5Stack
+from transformers.models.mt5.modeling_mt5 import MT5ForConditionalGeneration
 
 from ..exceptions import InvalidBenchmark
 from ..logging_utils import log, log_once
@@ -34,40 +34,6 @@ class MT5ForRegression(MT5ForConditionalGeneration):
 
     def __init__(self, config: MT5Config) -> None:
         super().__init__(config)
-        self.config = config
-        self.shared = torch.nn.Embedding(config.vocab_size, config.d_model)
-
-        encoder_config = config
-        encoder_config.is_decoder = False
-        encoder_config.use_cache = False
-        encoder_config.is_encoder_decoder = False
-        self.encoder = MT5Stack(encoder_config, self.shared)
-
-        decoder_config = MT5Config(**config.to_dict())
-        decoder_config.is_decoder = True
-        decoder_config.use_cache = False
-        decoder_config.is_encoder_decoder = False
-        self.decoder = MT5Stack(decoder_config, self.shared)
-
-        self.num_labels = getattr(config, "num_labels", 1)
-        self.d_model = config.d_model
-        self.lm_head = torch.nn.Linear(config.d_model, self.num_labels, bias=False)
-
-        self.post_init()
-
-    def post_init(self) -> None:
-        """Initialise weights."""
-        for module in self.modules():
-            if isinstance(module, torch.nn.Linear):
-                torch.nn.init.normal_(
-                    module.weight, mean=0.0, std=self.config.initializer_factor
-                )
-                if module.bias is not None:
-                    torch.nn.init.zeros_(module.bias)
-            elif isinstance(module, torch.nn.Embedding):
-                torch.nn.init.normal_(
-                    module.weight, mean=0.0, std=self.config.initializer_factor
-                )
 
     def forward(  # type: ignore[override]
         self,
