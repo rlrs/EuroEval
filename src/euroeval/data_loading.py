@@ -219,6 +219,14 @@ def _split_dataset_if_needed(
             "Cannot create missing splits without a 'train' split."
         )
 
+    non_train_splits = [split for split in dataset_config.splits if split != "train"]
+    existing_non_train = [split for split in non_train_splits if split in dataset]
+    if existing_non_train:
+        raise InvalidBenchmark(
+            "Cannot synthesise missing splits when some requested splits already "
+            "exist. Please provide all splits explicitly or only provide 'train'."
+        )
+
     split_sizes = dataset_config.split_sizes
     if any(split not in split_sizes for split in dataset_config.splits):
         raise InvalidBenchmark(
