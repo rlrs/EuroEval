@@ -13,6 +13,7 @@ from .prompt_templates import (
     SENT_TEMPLATES,
     SIMPL_TEMPLATES,
     SUMM_TEMPLATES,
+    TRANSLATION_TEMPLATES,
     TOKEN_CLASSIFICATION_TEMPLATES,
 )
 
@@ -89,6 +90,17 @@ SUMM = Task(
     template_dict=SUMM_TEMPLATES,
     metrics=[m.bert_score_metric, m.rouge_l_metric],
     default_num_few_shot_examples=1,
+    default_max_generated_tokens=256,
+    default_labels=[],
+    default_allowed_model_types=[ModelType.GENERATIVE],
+)
+
+TRANSLATION = Task(
+    name="translation",
+    task_group=TaskGroup.TEXT_TO_TEXT,
+    template_dict=TRANSLATION_TEMPLATES,
+    metrics=[m.comet_metric],
+    default_num_few_shot_examples=0,
     default_max_generated_tokens=256,
     default_labels=[],
     default_allowed_model_types=[ModelType.GENERATIVE],
