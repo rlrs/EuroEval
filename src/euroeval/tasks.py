@@ -100,7 +100,7 @@ TRANSLATION = Task(
     task_group=TaskGroup.TEXT_TO_TEXT,
     template_dict=TRANSLATION_TEMPLATES,
     metrics=[
-        m.metricx_24_hybrid_xxl_metric,
+        m.metricx_24_hybrid_large_metric,
         m.comet_metric,
         m.bert_score_metric,
         m.sacrebleu_metric,

@@ -222,3 +222,17 @@ metricx_24_hybrid_xxl_metric = MetricXMetric(
     model_id="google/metricx-24-hybrid-xxl-v2p6-bfloat16",
     postprocessing_fn=lambda x: (x, f"{x:.4f}"),
 )
+
+metricx_24_hybrid_xl_metric = MetricXMetric(
+    name="metricx_24_hybrid_xl",
+    pretty_name="MetricX-24 Hybrid XL",
+    model_id="google/metricx-24-hybrid-xl-v2p6-bfloat16",
+    postprocessing_fn=lambda x: (x, f"{x:.4f}"),
+)
+
+metricx_24_hybrid_large_metric = MetricXMetric(
+    name="metricx_24_hybrid_large",
+    pretty_name="MetricX-24 Hybrid Large",
+    model_id="google/metricx-24-hybrid-large-v2p6-bfloat16",
+    postprocessing_fn=lambda x: (x, f"{x:.4f}"),
+)
