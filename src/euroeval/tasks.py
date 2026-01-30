@@ -101,6 +101,7 @@ TRANSLATION = Task(
     template_dict=TRANSLATION_TEMPLATES,
     metrics=[
         m.metricx_24_hybrid_large_metric,
+        m.metricx_24_hybrid_xl_metric,
         m.comet_metric,
         m.bert_score_metric,
         m.sacrebleu_metric,
