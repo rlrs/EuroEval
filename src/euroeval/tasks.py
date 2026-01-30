@@ -102,6 +102,7 @@ TRANSLATION = Task(
     metrics=[
         m.metricx_24_hybrid_large_metric,
         m.metricx_24_hybrid_xl_metric,
+        m.metricx_24_hybrid_xxl_metric,
         m.comet_metric,
         m.bert_score_metric,
         m.rouge_l_metric,
