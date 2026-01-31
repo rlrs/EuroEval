@@ -3,13 +3,16 @@
 import collections.abc as c
 import logging
 import typing as t
+from dataclasses import replace as dataclasses_replace
 from pathlib import Path
 
+import torch
 from pydantic import BaseModel, Field, ValidationError
 
 from ..exceptions import InvalidBenchmark
 from ..logging_utils import log
-from ..utils import extract_json_dict_from_string
+from ..tokenisation_utils import apply_chat_template, has_chat_template
+from ..utils import create_model_cache_dir, extract_json_dict_from_string
 from .base import Metric
 
 if t.TYPE_CHECKING:
@@ -31,6 +34,7 @@ class LLMAsAJudgeMetric(Metric):
         judge_kwargs: dict[str, t.Any],
         user_prompt: str,
         response_format: t.Type[BaseModel],
+        judge_backend: str = "litellm",
         scoring_fn: ScoringFunction | None = None,
         batch_scoring_fn: BatchScoringFunction | None = None,
         condition_formatting_fn: t.Callable[[str], str] = lambda x: x,
@@ -58,6 +62,9 @@ class LLMAsAJudgeMetric(Metric):
                 The response format to use for the judge model. This should be a
                 Pydantic model that defines the expected structure of the judge's
                 response.
+            judge_backend:
+                The backend to use for the judge model. One of: "litellm", "vllm",
+                "transformers".
             scoring_fn:
                 A function that takes the judge's response and returns a score.
             batch_scoring_fn:
@@ -72,9 +79,10 @@ class LLMAsAJudgeMetric(Metric):
         """
         super().__init__(name=name, pretty_name=pretty_name)
         self.judge_id = judge_id
-        self.judge_kwargs = judge_kwargs
+        self.judge_kwargs = dict(judge_kwargs)
         self.user_prompt = user_prompt
         self.response_format = response_format
+        self.judge_backend = judge_backend.lower()
         self.batch_scoring_fn = self._get_batch_scoring_fn(
             scoring_fn=scoring_fn, batch_scoring_fn=batch_scoring_fn
         )
@@ -82,7 +90,8 @@ class LLMAsAJudgeMetric(Metric):
         self.system_prompt = system_prompt
 
         # Add response format to the generation kwargs
-        self.judge_kwargs["response_format"] = self.response_format
+        self._litellm_kwargs = dict(self.judge_kwargs)
+        self._litellm_kwargs["response_format"] = self.response_format
 
     def __call__(
         self,
@@ -127,28 +136,6 @@ class LLMAsAJudgeMetric(Metric):
                 f"number of references ({len(references):,})."
             )
 
-        # Load the judge model
-        judge_model_config = LiteLLMModel.get_model_config(
-            model_id=self.judge_id, benchmark_config=benchmark_config
-        )
-        self.judge = LiteLLMModel(
-            model_config=judge_model_config,
-            dataset_config=dataset_config,
-            benchmark_config=benchmark_config,
-            log_metadata=False,
-            **self.judge_kwargs,
-        )
-
-        # Create a cache for the judge model
-        judge_cache = ModelCache(
-            model_cache_dir=Path(judge_model_config.model_cache_dir),
-            cache_name=f"{dataset_config.name}-model-outputs.json",
-            max_generated_tokens=dataset_config.max_generated_tokens,
-            progress_bar=benchmark_config.progress_bar,
-            hash_inputs=not benchmark_config.debug,
-        )
-        judge_cache.load()
-
         # Prepare the messages for the LLM
         conversations = [
             [
@@ -167,6 +154,64 @@ class LLMAsAJudgeMetric(Metric):
                 for conversation in conversations
             ]
 
+        # Load the judge model and cache
+        match self.judge_backend:
+            case "litellm":
+                judge_model_config = LiteLLMModel.get_model_config(
+                    model_id=self.judge_id, benchmark_config=benchmark_config
+                )
+                self.judge = LiteLLMModel(
+                    model_config=judge_model_config,
+                    dataset_config=dataset_config,
+                    benchmark_config=benchmark_config,
+                    log_metadata=False,
+                    **self._litellm_kwargs,
+                )
+                judge_cache_dir = Path(judge_model_config.model_cache_dir)
+            case "vllm":
+                from ..benchmark_modules import VLLMModel
+
+                judge_model_config = VLLMModel.get_model_config(
+                    model_id=self.judge_id, benchmark_config=benchmark_config
+                )
+                judge_dataset_config = self._make_judge_dataset_config(
+                    dataset_config=dataset_config
+                )
+                vllm_kwargs = self._get_generation_kwargs(
+                    backend="vllm",
+                    default_max_tokens=dataset_config.max_generated_tokens,
+                )
+                self.judge = VLLMModel(
+                    model_config=judge_model_config,
+                    dataset_config=judge_dataset_config,
+                    benchmark_config=benchmark_config,
+                    log_metadata=False,
+                    generation_kwargs=vllm_kwargs or None,
+                )
+                judge_cache_dir = Path(judge_model_config.model_cache_dir)
+            case "transformers":
+                self.judge = None
+                judge_cache_dir = Path(
+                    create_model_cache_dir(
+                        cache_dir=benchmark_config.cache_dir, model_id=self.judge_id
+                    )
+                )
+            case _:
+                raise InvalidBenchmark(
+                    f"Unknown judge backend {self.judge_backend!r}. Expected one of "
+                    "'litellm', 'vllm', 'transformers'."
+                )
+
+        # Create a cache for the judge model
+        judge_cache = ModelCache(
+            model_cache_dir=judge_cache_dir,
+            cache_name=f"{dataset_config.name}-model-outputs.json",
+            max_generated_tokens=dataset_config.max_generated_tokens,
+            progress_bar=benchmark_config.progress_bar,
+            hash_inputs=not benchmark_config.debug,
+        )
+        judge_cache.load()
+
         # Get the non-cached conversations and generate the completions for them
         non_cached_conversations = [
             (idx, conversation)
@@ -174,13 +219,106 @@ class LLMAsAJudgeMetric(Metric):
             if conversation not in judge_cache
         ]
         if non_cached_conversations:
-            model_inputs = dict(messages=[c for _, c in non_cached_conversations])
-            non_cached_outputs = self.judge.generate(inputs=model_inputs)
+            if self.judge_backend == "litellm":
+                model_inputs = dict(messages=[c for _, c in non_cached_conversations])
+                non_cached_outputs = self.judge.generate(inputs=model_inputs)
+                judge_cache.add_to_cache(
+                    model_inputs=model_inputs, model_output=non_cached_outputs
+                )
+            elif self.judge_backend == "vllm":
+                prompts = [
+                    self._render_prompt(
+                        conversation=conversation, tokeniser=self.judge._tokeniser
+                    )
+                    for _, conversation in non_cached_conversations
+                ]
+                model_inputs = dict(text=prompts)
+                non_cached_outputs = self.judge.generate(inputs=model_inputs)
+                judge_cache.add_to_cache(
+                    model_inputs=dict(
+                        messages=[c for _, c in non_cached_conversations]
+                    ),
+                    model_output=non_cached_outputs,
+                )
+            elif self.judge_backend == "transformers":
+                from ..data_models import GenerativeModelOutput
+                from transformers import (
+                    AutoConfig,
+                    AutoModelForCausalLM,
+                    AutoModelForSeq2SeqLM,
+                    AutoTokenizer,
+                )
 
-            # Store the non-cached outputs in the cache
-            judge_cache.add_to_cache(
-                model_inputs=model_inputs, model_output=non_cached_outputs
-            )
+                config = AutoConfig.from_pretrained(
+                    self.judge_id,
+                    cache_dir=benchmark_config.cache_dir,
+                    trust_remote_code=benchmark_config.trust_remote_code,
+                )
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.judge_id,
+                    cache_dir=benchmark_config.cache_dir,
+                    trust_remote_code=benchmark_config.trust_remote_code,
+                    use_fast=False,
+                )
+                if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
+                    tokenizer.pad_token_id = tokenizer.eos_token_id
+                prompts = [
+                    self._render_prompt(
+                        conversation=conversation, tokeniser=tokenizer
+                    )
+                    for _, conversation in non_cached_conversations
+                ]
+                if config.is_encoder_decoder:
+                    model = AutoModelForSeq2SeqLM.from_pretrained(
+                        self.judge_id,
+                        cache_dir=benchmark_config.cache_dir,
+                        trust_remote_code=benchmark_config.trust_remote_code,
+                    )
+                else:
+                    model = AutoModelForCausalLM.from_pretrained(
+                        self.judge_id,
+                        cache_dir=benchmark_config.cache_dir,
+                        trust_remote_code=benchmark_config.trust_remote_code,
+                    )
+                model.to(benchmark_config.device)
+                model.eval()
+
+                gen_kwargs = self._get_generation_kwargs(
+                    backend="transformers",
+                    default_max_tokens=dataset_config.max_generated_tokens,
+                )
+                max_input_length = self._get_transformers_max_input_length(
+                    tokenizer=tokenizer,
+                    config=config,
+                    max_new_tokens=int(gen_kwargs.get("max_new_tokens", 0)),
+                )
+                encoded = tokenizer(
+                    prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=max_input_length is not None,
+                    max_length=max_input_length,
+                )
+                encoded = {k: v.to(benchmark_config.device) for k, v in encoded.items()}
+                with torch.inference_mode():
+                    output_ids = model.generate(**encoded, **gen_kwargs)
+                if not config.is_encoder_decoder:
+                    prompt_len = encoded["input_ids"].shape[1]
+                    output_ids = output_ids[:, prompt_len:]
+                sequences = tokenizer.batch_decode(
+                    output_ids, skip_special_tokens=True
+                )
+                non_cached_outputs = GenerativeModelOutput(sequences=sequences)
+                judge_cache.add_to_cache(
+                    model_inputs=dict(
+                        messages=[c for _, c in non_cached_conversations]
+                    ),
+                    model_output=non_cached_outputs,
+                )
+            else:
+                raise InvalidBenchmark(
+                    f"Unknown judge backend {self.judge_backend!r}."
+                )
             judge_cache.save()
 
         # Load all the outputs from the cache, in the original order, and parse them
@@ -247,6 +385,105 @@ class LLMAsAJudgeMetric(Metric):
                 prediction=prediction, condition=self.condition_formatting_fn(condition)
             )
         return self.user_prompt.format(prediction=prediction)
+
+    def _make_judge_dataset_config(
+        self, dataset_config: "DatasetConfig"
+    ) -> "DatasetConfig":
+        """Create a dataset config suitable for judge generation."""
+        judge_task = dataclasses_replace(
+            dataset_config.task,
+            uses_structured_output=False,
+            uses_logprobs=False,
+            requires_logprobs=False,
+        )
+        return dataclasses_replace(dataset_config, task=judge_task)
+
+    def _render_prompt(
+        self,
+        conversation: list[dict[str, str]],
+        tokeniser: t.Any | None = None,
+    ) -> str:
+        """Render a conversation to a prompt string."""
+        if tokeniser is not None and has_chat_template(tokeniser=tokeniser):
+            return t.cast(
+                str,
+                apply_chat_template(
+                    conversation=conversation,
+                    tokeniser=tokeniser,
+                    tokenise=False,
+                    add_generation_prompt=True,
+                ),
+            )
+        return self._fallback_prompt(conversation=conversation)
+
+    @staticmethod
+    def _fallback_prompt(conversation: list[dict[str, str]]) -> str:
+        """Fallback prompt rendering when no chat template is available."""
+        lines: list[str] = []
+        for message in conversation:
+            role = message.get("role", "user")
+            prefix = role.title()
+            lines.append(f"{prefix}: {message.get('content', '')}")
+        lines.append("Assistant:")
+        return "\n".join(lines)
+
+    def _get_generation_kwargs(
+        self, backend: str, default_max_tokens: int
+    ) -> dict[str, t.Any]:
+        """Filter and map generation kwargs for a specific backend."""
+        if backend == "vllm":
+            allowed = {
+                "temperature",
+                "top_p",
+                "top_k",
+                "repetition_penalty",
+                "max_tokens",
+                "max_new_tokens",
+            }
+        elif backend == "transformers":
+            allowed = {
+                "temperature",
+                "top_p",
+                "top_k",
+                "repetition_penalty",
+                "max_new_tokens",
+                "max_tokens",
+                "do_sample",
+                "num_beams",
+            }
+        else:
+            return {}
+
+        kwargs = {k: v for k, v in self.judge_kwargs.items() if k in allowed}
+        if "max_new_tokens" not in kwargs and "max_tokens" not in kwargs:
+            kwargs["max_new_tokens"] = default_max_tokens
+        elif "max_tokens" in kwargs and "max_new_tokens" not in kwargs:
+            kwargs["max_new_tokens"] = kwargs.pop("max_tokens")
+        if "temperature" in kwargs and "do_sample" not in kwargs:
+            kwargs["do_sample"] = bool(kwargs["temperature"])
+        return kwargs
+
+    @staticmethod
+    def _get_transformers_max_input_length(
+        tokenizer: t.Any, config: t.Any, max_new_tokens: int
+    ) -> int | None:
+        """Compute a safe max input length for transformers generation."""
+        candidates: list[int] = []
+        model_max_length = getattr(tokenizer, "model_max_length", None)
+        if isinstance(model_max_length, int) and model_max_length < 10**9:
+            candidates.append(model_max_length)
+        max_pos = getattr(config, "max_position_embeddings", None)
+        if isinstance(max_pos, int) and max_pos > 0:
+            candidates.append(max_pos)
+        if not candidates:
+            return None
+
+        max_input = min(candidates)
+        if getattr(config, "is_encoder_decoder", False):
+            return max_input
+
+        reserved = max(1, max_new_tokens)
+        return max(1, max_input - reserved)
 
     def _get_batch_scoring_fn(
         self,

@@ -137,6 +137,7 @@ class VLLMModel(HuggingFaceEncoderModel):
         dataset_config: "DatasetConfig",
         benchmark_config: "BenchmarkConfig",
         log_metadata: bool = True,
+        generation_kwargs: dict[str, t.Any] | None = None,
     ) -> None:
         """Initialise the vLLM model.
 
@@ -149,6 +150,8 @@ class VLLMModel(HuggingFaceEncoderModel):
                 The benchmark configuration.
             log_metadata:
                 Whether to log the model and dataset metadata.
+            generation_kwargs:
+                Optional generation parameter overrides.
         """
         if importlib.util.find_spec("vllm") is None:
             raise NeedsExtraInstalled(extra="generative")
@@ -183,6 +186,7 @@ class VLLMModel(HuggingFaceEncoderModel):
             )
         self._model: "LLM" = model
         self._tokeniser: Tokeniser = tokeniser
+        self.generation_kwargs = generation_kwargs
 
         # We specify `HuggingFaceEncoderModel` here instead of `VLLMModel`, as we want
         # to call the `__init__` method of the `BenchmarkModule` class.
@@ -531,11 +535,22 @@ class VLLMModel(HuggingFaceEncoderModel):
                     level=logging.DEBUG,
                 )
 
+        if self.generation_kwargs:
+            for key in ("temperature", "top_p", "top_k", "repetition_penalty"):
+                if key in self.generation_kwargs:
+                    generation_kwargs[key] = self.generation_kwargs[key]
+
         max_tokens: int = (
             REASONING_MAX_TOKENS
             if self.generative_type == GenerativeType.REASONING
             else self.dataset_config.max_generated_tokens
         )
+        if self.generation_kwargs:
+            max_override = self.generation_kwargs.get(
+                "max_tokens", self.generation_kwargs.get("max_new_tokens")
+            )
+            if max_override is not None:
+                max_tokens = int(max_override)
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             logprobs=MAX_VLLM_LOGPROBS
@@ -576,9 +591,7 @@ class VLLMModel(HuggingFaceEncoderModel):
         max_tokens_per_prompt = min(
             self._tokeniser.model_max_length, MAX_CONTEXT_LENGTH
         )
-        max_tokens_per_prompt -= min(
-            self.dataset_config.max_generated_tokens, max_tokens_per_prompt - 1
-        )
+        max_tokens_per_prompt -= min(max_tokens, max_tokens_per_prompt - 1)
         tokenized_prompts = self._tokeniser(
             text=prompts, max_length=max_tokens_per_prompt
         )
