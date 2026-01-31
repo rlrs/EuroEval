@@ -35,6 +35,9 @@ class LLMAsAJudgeMetric(Metric):
         user_prompt: str,
         response_format: t.Type[BaseModel],
         judge_backend: str = "litellm",
+        judge_device: str | torch.device | None = None,
+        judge_gpu_memory_utilization: float | None = None,
+        judge_gpu_memory_gb: float | None = None,
         scoring_fn: ScoringFunction | None = None,
         batch_scoring_fn: BatchScoringFunction | None = None,
         condition_formatting_fn: t.Callable[[str], str] = lambda x: x,
@@ -65,6 +68,12 @@ class LLMAsAJudgeMetric(Metric):
             judge_backend:
                 The backend to use for the judge model. One of: "litellm", "vllm",
                 "transformers".
+            judge_device:
+                Optional device override for the judge model (e.g., "cpu", "cuda:1").
+            judge_gpu_memory_utilization:
+                Optional GPU memory utilization override for the judge (vLLM only).
+            judge_gpu_memory_gb:
+                Optional GPU memory cap in GiB for the judge (vLLM only).
             scoring_fn:
                 A function that takes the judge's response and returns a score.
             batch_scoring_fn:
@@ -83,6 +92,9 @@ class LLMAsAJudgeMetric(Metric):
         self.user_prompt = user_prompt
         self.response_format = response_format
         self.judge_backend = judge_backend.lower()
+        self.judge_device = judge_device
+        self.judge_gpu_memory_utilization = judge_gpu_memory_utilization
+        self.judge_gpu_memory_gb = judge_gpu_memory_gb
         self.batch_scoring_fn = self._get_batch_scoring_fn(
             scoring_fn=scoring_fn, batch_scoring_fn=batch_scoring_fn
         )
@@ -136,6 +148,10 @@ class LLMAsAJudgeMetric(Metric):
                 f"number of references ({len(references):,})."
             )
 
+        judge_benchmark_config = self._get_judge_benchmark_config(
+            benchmark_config=benchmark_config
+        )
+
         # Prepare the messages for the LLM
         conversations = [
             [
@@ -158,12 +174,12 @@ class LLMAsAJudgeMetric(Metric):
         match self.judge_backend:
             case "litellm":
                 judge_model_config = LiteLLMModel.get_model_config(
-                    model_id=self.judge_id, benchmark_config=benchmark_config
+                    model_id=self.judge_id, benchmark_config=judge_benchmark_config
                 )
                 self.judge = LiteLLMModel(
                     model_config=judge_model_config,
                     dataset_config=dataset_config,
-                    benchmark_config=benchmark_config,
+                    benchmark_config=judge_benchmark_config,
                     log_metadata=False,
                     **self._litellm_kwargs,
                 )
@@ -172,7 +188,7 @@ class LLMAsAJudgeMetric(Metric):
                 from ..benchmark_modules import VLLMModel
 
                 judge_model_config = VLLMModel.get_model_config(
-                    model_id=self.judge_id, benchmark_config=benchmark_config
+                    model_id=self.judge_id, benchmark_config=judge_benchmark_config
                 )
                 judge_dataset_config = self._make_judge_dataset_config(
                     dataset_config=dataset_config
@@ -184,7 +200,7 @@ class LLMAsAJudgeMetric(Metric):
                 self.judge = VLLMModel(
                     model_config=judge_model_config,
                     dataset_config=judge_dataset_config,
-                    benchmark_config=benchmark_config,
+                    benchmark_config=judge_benchmark_config,
                     log_metadata=False,
                     generation_kwargs=vllm_kwargs or None,
                 )
@@ -193,7 +209,8 @@ class LLMAsAJudgeMetric(Metric):
                 self.judge = None
                 judge_cache_dir = Path(
                     create_model_cache_dir(
-                        cache_dir=benchmark_config.cache_dir, model_id=self.judge_id
+                        cache_dir=judge_benchmark_config.cache_dir,
+                        model_id=self.judge_id,
                     )
                 )
             case _:
@@ -251,13 +268,13 @@ class LLMAsAJudgeMetric(Metric):
 
                 config = AutoConfig.from_pretrained(
                     self.judge_id,
-                    cache_dir=benchmark_config.cache_dir,
-                    trust_remote_code=benchmark_config.trust_remote_code,
+                    cache_dir=judge_benchmark_config.cache_dir,
+                    trust_remote_code=judge_benchmark_config.trust_remote_code,
                 )
                 tokenizer = AutoTokenizer.from_pretrained(
                     self.judge_id,
-                    cache_dir=benchmark_config.cache_dir,
-                    trust_remote_code=benchmark_config.trust_remote_code,
+                    cache_dir=judge_benchmark_config.cache_dir,
+                    trust_remote_code=judge_benchmark_config.trust_remote_code,
                     use_fast=False,
                 )
                 if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
@@ -271,16 +288,16 @@ class LLMAsAJudgeMetric(Metric):
                 if config.is_encoder_decoder:
                     model = AutoModelForSeq2SeqLM.from_pretrained(
                         self.judge_id,
-                        cache_dir=benchmark_config.cache_dir,
-                        trust_remote_code=benchmark_config.trust_remote_code,
+                        cache_dir=judge_benchmark_config.cache_dir,
+                        trust_remote_code=judge_benchmark_config.trust_remote_code,
                     )
                 else:
                     model = AutoModelForCausalLM.from_pretrained(
                         self.judge_id,
-                        cache_dir=benchmark_config.cache_dir,
-                        trust_remote_code=benchmark_config.trust_remote_code,
+                        cache_dir=judge_benchmark_config.cache_dir,
+                        trust_remote_code=judge_benchmark_config.trust_remote_code,
                     )
-                model.to(benchmark_config.device)
+                model.to(judge_benchmark_config.device)
                 model.eval()
 
                 gen_kwargs = self._get_generation_kwargs(
@@ -299,7 +316,9 @@ class LLMAsAJudgeMetric(Metric):
                     truncation=max_input_length is not None,
                     max_length=max_input_length,
                 )
-                encoded = {k: v.to(benchmark_config.device) for k, v in encoded.items()}
+                encoded = {
+                    k: v.to(judge_benchmark_config.device) for k, v in encoded.items()
+                }
                 with torch.inference_mode():
                     output_ids = model.generate(**encoded, **gen_kwargs)
                 if not config.is_encoder_decoder:
@@ -462,6 +481,55 @@ class LLMAsAJudgeMetric(Metric):
         if "temperature" in kwargs and "do_sample" not in kwargs:
             kwargs["do_sample"] = bool(kwargs["temperature"])
         return kwargs
+
+    def _get_judge_benchmark_config(
+        self, benchmark_config: "BenchmarkConfig"
+    ) -> "BenchmarkConfig":
+        """Create a benchmark config for the judge model if overrides are set."""
+        if (
+            self.judge_device is None
+            and self.judge_gpu_memory_utilization is None
+            and self.judge_gpu_memory_gb is None
+        ):
+            return benchmark_config
+
+        device = benchmark_config.device
+        if self.judge_device is not None:
+            device = (
+                self.judge_device
+                if isinstance(self.judge_device, torch.device)
+                else torch.device(self.judge_device)
+            )
+
+        gpu_memory_utilization = benchmark_config.gpu_memory_utilization
+        if self.judge_gpu_memory_gb is not None:
+            if device.type != "cuda":
+                raise InvalidBenchmark(
+                    "judge_gpu_memory_gb requires a CUDA device."
+                )
+            if not torch.cuda.is_available():
+                raise InvalidBenchmark("CUDA is not available.")
+            if device.index is None:
+                device_index = torch.cuda.current_device()
+            else:
+                device_index = device.index
+            total_bytes = torch.cuda.get_device_properties(device_index).total_memory
+            requested_bytes = float(self.judge_gpu_memory_gb) * (1024**3)
+            if requested_bytes <= 0:
+                raise InvalidBenchmark("judge_gpu_memory_gb must be > 0.")
+            if requested_bytes > total_bytes:
+                raise InvalidBenchmark(
+                    "judge_gpu_memory_gb exceeds available GPU memory."
+                )
+            gpu_memory_utilization = requested_bytes / total_bytes
+        elif self.judge_gpu_memory_utilization is not None:
+            gpu_memory_utilization = float(self.judge_gpu_memory_utilization)
+
+        return dataclasses_replace(
+            benchmark_config,
+            device=device,
+            gpu_memory_utilization=gpu_memory_utilization,
+        )
 
     @staticmethod
     def _get_transformers_max_input_length(
