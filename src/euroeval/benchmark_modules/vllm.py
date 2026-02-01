@@ -5,8 +5,10 @@ import contextlib
 import importlib.util
 import json
 import logging
+import os
 import re
 import shutil
+import signal
 import typing as t
 from functools import partial
 from pathlib import Path
@@ -219,6 +221,66 @@ class VLLMModel(HuggingFaceEncoderModel):
                 log_metadata=self.log_metadata,
             )
         )
+
+    def unload(self) -> None:
+        """Unload the vLLM model and free GPU memory."""
+        log("Attempting to unload vLLM model.", level=logging.INFO)
+        with contextlib.suppress(Exception):
+            llm_engine = getattr(self._model, "llm_engine", None)
+            engine_core = getattr(llm_engine, "engine_core", None)
+            resources = getattr(engine_core, "resources", None)
+            engine_manager = getattr(resources, "engine_manager", None)
+            processes = getattr(engine_manager, "processes", None)
+            if processes:
+                log("Attempting to terminate vLLM EngineCore processes.", level=logging.DEBUG)
+                for proc in processes:
+                    try:
+                        pid = getattr(proc, "pid", None)
+                        alive = getattr(proc, "is_alive", lambda: False)()
+                        log(f"EngineCore proc pid={pid} alive={alive}", level=logging.DEBUG)
+                        if alive:
+                            with contextlib.suppress(Exception):
+                                proc.terminate()
+                            with contextlib.suppress(Exception):
+                                proc.join(timeout=5)
+                            alive = getattr(proc, "is_alive", lambda: False)()
+                            log(f"After terminate pid={pid} alive={alive}", level=logging.DEBUG)
+                            if alive:
+                                with contextlib.suppress(Exception):
+                                    kill = getattr(proc, "kill", None)
+                                    if callable(kill):
+                                        kill()
+                                with contextlib.suppress(Exception):
+                                    proc.join(timeout=5)
+                                alive = getattr(proc, "is_alive", lambda: False)()
+                                log(f"After kill pid={pid} alive={alive}", level=logging.DEBUG)
+                    except Exception as e:
+                        log(f"Failed to terminate vLLM proc: {e}", level=logging.DEBUG)
+            shutdown = getattr(engine_core, "shutdown", None)
+            if callable(shutdown):
+                shutdown()
+            # Fallback: kill EngineCore_* child processes if still around
+            with contextlib.suppress(Exception):
+                pid = os.getpid()
+                children_path = f"/proc/{pid}/task/{pid}/children"
+                with open(children_path) as f:
+                    children = [int(p) for p in f.read().strip().split() if p.strip()]
+                for child_pid in children:
+                    try:
+                        with open(f"/proc/{child_pid}/comm") as f:
+                            name = f.read().strip()
+                    except Exception:
+                        name = ""
+                    if name.startswith("EngineCore"):
+                        log(f"SIGTERM EngineCore pid={child_pid}", level=logging.DEBUG)
+                        with contextlib.suppress(Exception):
+                            os.kill(child_pid, signal.SIGTERM)
+                        log(f"SIGKILL EngineCore pid={child_pid}", level=logging.DEBUG)
+                        with contextlib.suppress(Exception):
+                            os.kill(child_pid, signal.SIGKILL)
+        with contextlib.suppress(Exception):
+            self._model = None  # type: ignore[assignment]
+        clear_vllm()
         if self.model_config.adapter_base_model_id is not None:
             adapter_path = snapshot_download(
                 repo_id=self.model_config.model_id,
@@ -1084,7 +1146,12 @@ def load_model_and_tokeniser(
     clear_vllm()
 
     distributed_executor_backend, tensor_parallel_size, pipeline_parallel_size = (
-        select_backend_and_parallelism()
+        select_backend_and_parallelism(
+            tensor_parallel_size_override=benchmark_config.vllm_tensor_parallel_size,
+            pipeline_parallel_size_override=(
+                benchmark_config.vllm_pipeline_parallel_size
+            ),
+        )
     )
 
     try:
@@ -1511,7 +1578,10 @@ def get_vllm_tokenisation_params(
     )
 
 
-def select_backend_and_parallelism() -> tuple[str, int, int]:
+def select_backend_and_parallelism(
+    tensor_parallel_size_override: int | None = None,
+    pipeline_parallel_size_override: int | None = None,
+) -> tuple[str, int, int]:
     """Determine the distributed backend and parallelism for vLLM.
 
     Returns:
@@ -1543,7 +1613,11 @@ def select_backend_and_parallelism() -> tuple[str, int, int]:
     if is_ray and using_multiple_nodes:
         distributed_executor_backend = "ray"
         tensor_parallel_size = local_gpu_count if local_gpu_count > 0 else 1
+        if tensor_parallel_size_override is not None:
+            tensor_parallel_size = max(1, min(tensor_parallel_size_override, tensor_parallel_size))
         pipeline_parallel_size = max(1, total_gpus // tensor_parallel_size)
+        if pipeline_parallel_size_override is not None:
+            pipeline_parallel_size = max(1, pipeline_parallel_size_override)
         log_once(
             f"Detected a multi-node setup with {pipeline_parallel_size:,} nodes, each "
             f"with {tensor_parallel_size:,} GPUs, so using `ray` as the "
@@ -1553,7 +1627,11 @@ def select_backend_and_parallelism() -> tuple[str, int, int]:
     else:
         distributed_executor_backend = "mp"
         tensor_parallel_size = local_gpu_count if local_gpu_count > 0 else 1
+        if tensor_parallel_size_override is not None:
+            tensor_parallel_size = max(1, min(tensor_parallel_size_override, tensor_parallel_size))
         pipeline_parallel_size = 1
+        if pipeline_parallel_size_override is not None:
+            pipeline_parallel_size = max(1, pipeline_parallel_size_override)
         log_once(
             f"Detected a single-node setup with {tensor_parallel_size:,} GPUs, "
             "so using the multiprocessing distributed backend.",

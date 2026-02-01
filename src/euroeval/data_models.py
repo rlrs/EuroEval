@@ -214,6 +214,14 @@ class DatasetConfig:
         splits (optional):
             The names of the splits in the dataset. If not provided, defaults to
             ["train", "val", "test"].
+        preprocess_fn (optional):
+            A function to preprocess the raw dataset after loading, but before any
+            split validation. It must return a DatasetDict.
+        split_seed (optional):
+            Random seed used when creating splits from a single split (e.g. train).
+        split_sizes (optional):
+            Explicit sizes for each split when creating splits from a single split.
+            Use None for at most one split to assign the remainder.
         bootstrap_samples (optional):
             Whether to bootstrap the dataset samples. Defaults to True.
         unofficial (optional):
@@ -237,6 +245,9 @@ class DatasetConfig:
     _allow_invalid_model_outputs: bool | None = None
     _logging_string: str | None = None
     splits: c.Sequence[str] = field(default_factory=lambda: ["train", "val", "test"])
+    preprocess_fn: t.Callable | None = None
+    split_seed: int | None = None
+    split_sizes: dict[str, int | None] | None = None
     bootstrap_samples: bool = True
     unofficial: bool = False
 
@@ -517,11 +528,22 @@ class BenchmarkConfig:
             faster evaluation, but at the risk of running out of GPU memory. Only reduce
             this if you are running out of GPU memory. Only relevant if the model is
             generative.
+        vllm_tensor_parallel_size:
+            Optional override for vLLM tensor parallel size for the main model.
+        vllm_pipeline_parallel_size:
+            Optional override for vLLM pipeline parallel size for the main model.
+        judge_vllm_tensor_parallel_size:
+            Optional override for vLLM tensor parallel size for judge models.
+        judge_vllm_pipeline_parallel_size:
+            Optional override for vLLM pipeline parallel size for judge models.
         requires_safetensors:
             Whether to only allow models that use the safetensors format.
         generative_type:
             The type of generative model to benchmark. Only relevant if the model is
             generative.
+        stage_metrics:
+            Whether to stage metrics for text-to-text tasks by generating outputs
+            first and scoring in a separate pass.
         download_only:
             Whether to only download the models, metrics and datasets without
             evaluating.
@@ -553,13 +575,18 @@ class BenchmarkConfig:
     few_shot: bool
     num_iterations: int
     gpu_memory_utilization: float
-    requires_safetensors: bool
-    generative_type: GenerativeType | None
-    download_only: bool
-    force: bool
-    verbose: bool
-    debug: bool
-    run_with_cli: bool
+    vllm_tensor_parallel_size: int | None = None
+    vllm_pipeline_parallel_size: int | None = None
+    judge_vllm_tensor_parallel_size: int | None = None
+    judge_vllm_pipeline_parallel_size: int | None = None
+    requires_safetensors: bool = False
+    generative_type: GenerativeType | None = None
+    stage_metrics: bool = False
+    download_only: bool = False
+    force: bool = False
+    verbose: bool = False
+    debug: bool = False
+    run_with_cli: bool = False
 
     @property
     def tasks(self) -> c.Sequence[Task]:
@@ -598,15 +625,20 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     evaluate_test_split: bool
     few_shot: bool
     num_iterations: int
-    requires_safetensors: bool
-    download_only: bool
-    gpu_memory_utilization: float
-    generative_type: GenerativeType | None
-    custom_datasets_file: Path
-    force: bool
-    verbose: bool
-    debug: bool
-    run_with_cli: bool
+    requires_safetensors: bool = False
+    download_only: bool = False
+    gpu_memory_utilization: float = 0.8
+    vllm_tensor_parallel_size: int | None = None
+    vllm_pipeline_parallel_size: int | None = None
+    judge_vllm_tensor_parallel_size: int | None = None
+    judge_vllm_pipeline_parallel_size: int | None = None
+    generative_type: GenerativeType | None = None
+    stage_metrics: bool = False
+    custom_datasets_file: Path = Path("custom_datasets.py")
+    force: bool = False
+    verbose: bool = False
+    debug: bool = False
+    run_with_cli: bool = False
 
 
 class BenchmarkResult(pydantic.BaseModel):

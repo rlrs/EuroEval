@@ -171,6 +171,34 @@ from .languages import get_all_languages
     "if you are running out of GPU memory. Only relevant if the model is generative.",
 )
 @click.option(
+    "--vllm-tp",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM tensor parallel size for the main model.",
+)
+@click.option(
+    "--vllm-pp",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM pipeline parallel size for the main model.",
+)
+@click.option(
+    "--judge-vllm-tp",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM tensor parallel size for judge models.",
+)
+@click.option(
+    "--judge-vllm-pp",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM pipeline parallel size for judge models.",
+)
+@click.option(
     "--requires-safetensors",
     is_flag=True,
     help="Only allow loading models that have safetensors weights available",
@@ -196,6 +224,12 @@ from .languages import get_all_languages
     is_flag=True,
     help="Only download the requested model weights and datasets, and exit.",
     default=False,
+)
+@click.option(
+    "--stage-metrics/--no-stage-metrics",
+    default=False,
+    show_default=True,
+    help="Stage text-to-text metrics by generating outputs first and scoring later.",
 )
 @click.option(
     "--debug/--no-debug",
@@ -254,10 +288,15 @@ def benchmark(
     api_base: str | None,
     api_version: str | None,
     gpu_memory_utilization: float,
+    vllm_tp: int | None,
+    vllm_pp: int | None,
+    judge_vllm_tp: int | None,
+    judge_vllm_pp: int | None,
     requires_safetensors: bool,
     generative_type: str | None,
     custom_datasets_file: Path,
     download_only: bool,
+    stage_metrics: bool,
     debug: bool,
     model_language: tuple[str],
     dataset_language: tuple[str],
@@ -285,6 +324,10 @@ def benchmark(
         api_base=api_base,
         api_version=api_version,
         gpu_memory_utilization=gpu_memory_utilization,
+        vllm_tensor_parallel_size=vllm_tp,
+        vllm_pipeline_parallel_size=vllm_pp,
+        judge_vllm_tensor_parallel_size=judge_vllm_tp,
+        judge_vllm_pipeline_parallel_size=judge_vllm_pp,
         generative_type=GenerativeType[generative_type.upper()]
         if generative_type
         else None,
@@ -293,6 +336,7 @@ def benchmark(
         run_with_cli=True,
         requires_safetensors=requires_safetensors,
         download_only=download_only,
+        stage_metrics=stage_metrics,
         model_language=None if len(model_language) == 0 else list(model_language),
         dataset_language=None if len(dataset_language) == 0 else list(dataset_language),
         batch_size=int(batch_size) if batch_size is not None else None,

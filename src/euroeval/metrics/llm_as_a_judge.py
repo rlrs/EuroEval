@@ -26,6 +26,29 @@ from ..types import BatchScoringFunction, ScoringFunction
 class LLMAsAJudgeMetric(Metric):
     """Use an LLM to judge the quality of the predictions."""
 
+    _judge_cache: dict[
+        tuple[
+            str,
+            str,
+            tuple[tuple[str, t.Any], ...],
+            int,
+            str,
+            float,
+            str,
+            bool,
+        ],
+        tuple[t.Any, Path],
+    ] = {}
+
+    @classmethod
+    def clear_judge_cache(cls) -> None:
+        """Unload cached judge models and clear the cache."""
+        for judge, _ in cls._judge_cache.values():
+            if hasattr(judge, "unload"):
+                with contextlib.suppress(Exception):
+                    judge.unload()  # type: ignore[attr-defined]
+        cls._judge_cache.clear()
+
     def __init__(
         self,
         name: str,
@@ -39,6 +62,7 @@ class LLMAsAJudgeMetric(Metric):
         batch_scoring_fn: BatchScoringFunction | None = None,
         condition_formatting_fn: t.Callable[[str], str] = lambda x: x,
         system_prompt: str | None = None,
+        judge_gpu_memory_gb: float | None = None,
     ) -> None:
         """Initialise the LLM as a judge metric.
 
@@ -76,6 +100,8 @@ class LLMAsAJudgeMetric(Metric):
             system_prompt (optional):
                 The system prompt to use for the judge model. If not provided, no system
                 prompt will be used.
+            judge_gpu_memory_gb (optional):
+                Optional GPU memory cap in GB for local judge models running on vLLM.
         """
         super().__init__(name=name, pretty_name=pretty_name)
         self.judge_id = judge_id
@@ -83,6 +109,7 @@ class LLMAsAJudgeMetric(Metric):
         self.user_prompt = user_prompt
         self.response_format = response_format
         self.judge_backend = judge_backend.lower()
+        self.judge_gpu_memory_gb = judge_gpu_memory_gb
         self.batch_scoring_fn = self._get_batch_scoring_fn(
             scoring_fn=scoring_fn, batch_scoring_fn=batch_scoring_fn
         )
@@ -157,38 +184,17 @@ class LLMAsAJudgeMetric(Metric):
         # Load the judge model and cache
         match self.judge_backend:
             case "litellm":
-                judge_model_config = LiteLLMModel.get_model_config(
-                    model_id=self.judge_id, benchmark_config=benchmark_config
-                )
-                self.judge = LiteLLMModel(
-                    model_config=judge_model_config,
+                self.judge, judge_cache_dir = self._get_or_create_judge(
+                    backend="litellm",
                     dataset_config=dataset_config,
                     benchmark_config=benchmark_config,
-                    log_metadata=False,
-                    **self._litellm_kwargs,
                 )
-                judge_cache_dir = Path(judge_model_config.model_cache_dir)
             case "vllm":
-                from ..benchmark_modules import VLLMModel
-
-                judge_model_config = VLLMModel.get_model_config(
-                    model_id=self.judge_id, benchmark_config=benchmark_config
-                )
-                judge_dataset_config = self._make_judge_dataset_config(
-                    dataset_config=dataset_config
-                )
-                vllm_kwargs = self._get_generation_kwargs(
+                self.judge, judge_cache_dir = self._get_or_create_judge(
                     backend="vllm",
-                    default_max_tokens=dataset_config.max_generated_tokens,
-                )
-                self.judge = VLLMModel(
-                    model_config=judge_model_config,
-                    dataset_config=judge_dataset_config,
+                    dataset_config=dataset_config,
                     benchmark_config=benchmark_config,
-                    log_metadata=False,
-                    generation_kwargs=vllm_kwargs or None,
                 )
-                judge_cache_dir = Path(judge_model_config.model_cache_dir)
             case "transformers":
                 self.judge = None
                 judge_cache_dir = Path(
@@ -485,6 +491,136 @@ class LLMAsAJudgeMetric(Metric):
         reserved = max(1, max_new_tokens)
         return max(1, max_input - reserved)
 
+    def _get_or_create_judge(
+        self,
+        backend: str,
+        dataset_config: "DatasetConfig",
+        benchmark_config: "BenchmarkConfig",
+    ) -> tuple[t.Any, Path]:
+        """Get or create a judge instance for a given backend."""
+        judge_dataset_config = self._make_judge_dataset_config(
+            dataset_config=dataset_config
+        )
+        max_tokens = int(judge_dataset_config.max_generated_tokens)
+        cache_key = self._build_cache_key(
+            backend=backend,
+            benchmark_config=benchmark_config,
+            max_tokens=max_tokens,
+        )
+        cached = self._judge_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        if backend == "litellm":
+            judge_model_config = LiteLLMModel.get_model_config(
+                model_id=self.judge_id, benchmark_config=benchmark_config
+            )
+            judge = LiteLLMModel(
+                model_config=judge_model_config,
+                dataset_config=judge_dataset_config,
+                benchmark_config=benchmark_config,
+                log_metadata=False,
+                **self._litellm_kwargs,
+            )
+            judge_cache_dir = Path(judge_model_config.model_cache_dir)
+        elif backend == "vllm":
+            from ..benchmark_modules import VLLMModel
+
+            benchmark_config = self._apply_judge_gpu_memory_cap(
+                benchmark_config=benchmark_config
+            )
+            if (
+                benchmark_config.judge_vllm_tensor_parallel_size is not None
+                or benchmark_config.judge_vllm_pipeline_parallel_size is not None
+            ):
+                benchmark_config = dataclasses_replace(
+                    benchmark_config,
+                    vllm_tensor_parallel_size=(
+                        benchmark_config.judge_vllm_tensor_parallel_size
+                    ),
+                    vllm_pipeline_parallel_size=(
+                        benchmark_config.judge_vllm_pipeline_parallel_size
+                    ),
+                )
+            judge_model_config = VLLMModel.get_model_config(
+                model_id=self.judge_id, benchmark_config=benchmark_config
+            )
+            vllm_kwargs = self._get_generation_kwargs(
+                backend="vllm",
+                default_max_tokens=judge_dataset_config.max_generated_tokens,
+            )
+            judge = VLLMModel(
+                model_config=judge_model_config,
+                dataset_config=judge_dataset_config,
+                benchmark_config=benchmark_config,
+                log_metadata=False,
+                generation_kwargs=vllm_kwargs or None,
+            )
+            judge_cache_dir = Path(judge_model_config.model_cache_dir)
+        else:
+            raise InvalidBenchmark(
+                f"Unknown judge backend {backend!r}. Expected one of "
+                "'litellm', 'vllm', 'transformers'."
+            )
+
+        self._judge_cache[cache_key] = (judge, judge_cache_dir)
+        return judge, judge_cache_dir
+
+    def _build_cache_key(
+        self,
+        backend: str,
+        benchmark_config: "BenchmarkConfig",
+        max_tokens: int,
+    ) -> tuple[
+        str,
+        str,
+        tuple[tuple[str, t.Any], ...],
+        int,
+        str,
+        float,
+        float | None,
+        int | None,
+        int | None,
+        str,
+        bool,
+    ]:
+        judge_kwargs_key = tuple(sorted(self.judge_kwargs.items()))
+        return (
+            backend,
+            self.judge_id,
+            judge_kwargs_key,
+            max_tokens,
+            benchmark_config.device.type,
+            benchmark_config.gpu_memory_utilization,
+            self.judge_gpu_memory_gb,
+            benchmark_config.judge_vllm_tensor_parallel_size,
+            benchmark_config.judge_vllm_pipeline_parallel_size,
+            benchmark_config.cache_dir,
+            benchmark_config.trust_remote_code,
+        )
+
+    def _apply_judge_gpu_memory_cap(
+        self, benchmark_config: "BenchmarkConfig"
+    ) -> "BenchmarkConfig":
+        """Apply judge GPU memory cap in GB if configured."""
+        if self.judge_gpu_memory_gb is None:
+            return benchmark_config
+        if benchmark_config.device.type != "cuda" or not torch.cuda.is_available():
+            return benchmark_config
+        total_memory = torch.cuda.get_device_properties(benchmark_config.device).total_memory
+        if total_memory <= 0:
+            return benchmark_config
+        cap_bytes = self.judge_gpu_memory_gb * 1024**3
+        cap_ratio = cap_bytes / total_memory
+        if cap_ratio <= 0:
+            return benchmark_config
+        new_util = min(benchmark_config.gpu_memory_utilization, cap_ratio)
+        if new_util == benchmark_config.gpu_memory_utilization:
+            return benchmark_config
+        return dataclasses_replace(
+            benchmark_config, gpu_memory_utilization=new_util
+        )
+
     def _get_batch_scoring_fn(
         self,
         scoring_fn: ScoringFunction | None,
@@ -529,6 +665,44 @@ class LLMAsAJudgeMetric(Metric):
         )
 
 
+class SourceReferenceLLMAsAJudgeMetric(LLMAsAJudgeMetric):
+    """Judge metric that combines source and reference into the condition."""
+
+    def __call__(
+        self,
+        predictions: c.Sequence,
+        references: c.Sequence,
+        dataset: "Dataset",
+        dataset_config: "DatasetConfig",
+        benchmark_config: "BenchmarkConfig",
+    ) -> float | None:
+        if dataset is None:
+            raise InvalidBenchmark(
+                "SourceReferenceLLMAsAJudgeMetric requires `dataset` to be passed."
+            )
+
+        sources = dataset["text"]
+        if not len(sources) == len(predictions) == len(references):
+            raise InvalidBenchmark(
+                "SourceReferenceLLMAsAJudgeMetric expects sources, predictions, and "
+                f"references to be the same length, got {len(sources)}, "
+                f"{len(predictions)}, and {len(references)}."
+            )
+
+        conditions = [
+            f"Source: {source}\nReference: {reference}"
+            for source, reference in zip(sources, references)
+        ]
+
+        return super().__call__(
+            predictions=predictions,
+            references=conditions,
+            dataset=dataset,
+            dataset_config=dataset_config,
+            benchmark_config=benchmark_config,
+        )
+
+
 ### Fluency metric ###
 
 
@@ -546,8 +720,10 @@ class Fluency(BaseModel):
 fluency_metric = LLMAsAJudgeMetric(
     name="fluency",
     pretty_name="Fluency",
-    judge_id="gpt-5-2025-08-07",
-    judge_kwargs=dict(temperature=1.0),
+    judge_id="google/gemma-3-12b-it",
+    judge_kwargs=dict(temperature=0.0),
+    judge_backend="vllm",
+    judge_gpu_memory_gb=30.0,
     user_prompt="Please rate the fluency of the following text on a scale from 1 to 5, "
     "with the following definitions:\n"
     "- 1: Very poor fluency, many grammatical errors\n"
@@ -559,4 +735,42 @@ fluency_metric = LLMAsAJudgeMetric(
     "Output your rating as a JSON object with a single key 'fluency'.",
     response_format=Fluency,
     scoring_fn=lambda output: (output.fluency - 1) / 4.0,
+)
+
+
+### Translation metric ###
+
+
+class TranslationQuality(BaseModel):
+    """Response format for the translation quality metric.
+
+    Attributes:
+        score:
+            The translation quality rating, an integer between 1 and 5.
+    """
+
+    score: t.Annotated[int, Field(ge=1, le=5)]
+
+
+translation_quality_metric = SourceReferenceLLMAsAJudgeMetric(
+    name="translation_quality",
+    pretty_name="Translation Quality",
+    judge_id="google/gemma-3-12b-it",
+    judge_kwargs=dict(temperature=0.0),
+    judge_backend="vllm",
+    judge_gpu_memory_gb=30.0,
+    user_prompt=(
+        "You will be given a source sentence, a reference translation, and a system "
+        "translation. Rate the system translation for adequacy and fluency using "
+        "the following scale:\n"
+        "- 1: Incorrect or gibberish\n"
+        "- 2: Major errors, meaning mostly wrong\n"
+        "- 3: Understandable but noticeable errors\n"
+        "- 4: Good, minor errors\n"
+        "- 5: Excellent, accurate and fluent\n\n"
+        "{condition}\nSystem translation: {prediction!r}\n\n"
+        "Output your rating as a JSON object with a single key 'score'."
+    ),
+    response_format=TranslationQuality,
+    scoring_fn=lambda output: (output.score - 1) / 4.0,
 )
