@@ -719,6 +719,9 @@ class BenchmarkConfig:
         generative_type:
             The type of generative model to benchmark. Only relevant if the model is
             generative.
+        stage_metrics:
+            Whether to stage metrics for text-to-text tasks by generating outputs
+            first and scoring in a separate pass.
         download_only:
             Whether to only download the models, metrics and datasets without
             evaluating.
@@ -759,6 +762,7 @@ class BenchmarkConfig:
     judge_vllm_pipeline_parallel_size: int | None
     requires_safetensors: bool
     generative_type: GenerativeType | None
+    stage_metrics: bool
     download_only: bool
     force: bool
     verbose: bool
@@ -813,6 +817,7 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     judge_vllm_tensor_parallel_size: int | None
     judge_vllm_pipeline_parallel_size: int | None
     generative_type: GenerativeType | None
+    stage_metrics: bool = False
     custom_datasets_file: Path
     force: bool
     verbose: bool
