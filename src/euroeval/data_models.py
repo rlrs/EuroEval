@@ -706,6 +706,14 @@ class BenchmarkConfig:
         attention_backend:
             The attention backend to use for vLLM. Defaults to FLASHINFER. Only
             relevant if the model is generative.
+        vllm_tensor_parallel_size:
+            Optional override for vLLM tensor parallel size for the main model.
+        vllm_pipeline_parallel_size:
+            Optional override for vLLM pipeline parallel size for the main model.
+        judge_vllm_tensor_parallel_size:
+            Optional override for vLLM tensor parallel size for judge models.
+        judge_vllm_pipeline_parallel_size:
+            Optional override for vLLM pipeline parallel size for judge models.
         requires_safetensors:
             Whether to only allow models that use the safetensors format.
         generative_type:
@@ -745,6 +753,10 @@ class BenchmarkConfig:
     attention_backend: t.Literal[
         *ATTENTION_BACKENDS  # pyrefly: ignore[invalid-literal]
     ]
+    vllm_tensor_parallel_size: int | None
+    vllm_pipeline_parallel_size: int | None
+    judge_vllm_tensor_parallel_size: int | None
+    judge_vllm_pipeline_parallel_size: int | None
     requires_safetensors: bool
     generative_type: GenerativeType | None
     download_only: bool
@@ -796,6 +808,10 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     attention_backend: t.Literal[
         *ATTENTION_BACKENDS  # pyrefly: ignore[invalid-literal]
     ]
+    vllm_tensor_parallel_size: int | None
+    vllm_pipeline_parallel_size: int | None
+    judge_vllm_tensor_parallel_size: int | None
+    judge_vllm_pipeline_parallel_size: int | None
     generative_type: GenerativeType | None
     custom_datasets_file: Path
     force: bool

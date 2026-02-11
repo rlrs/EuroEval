@@ -164,6 +164,45 @@ class HuggingFaceMetric(Metric):
 class SourceBasedMetric(HuggingFaceMetric):
     """Subclass of HuggingfaceMetric for metrics also requiring source text as input."""
 
+    def __init__(
+        self,
+        name: str,
+        pretty_name: str,
+        huggingface_id: str,
+        results_key: str,
+        compute_kwargs: dict[str, t.Any] | None = None,
+        postprocessing_fn: t.Callable[[float], tuple[float, str]] | None = None,
+        wrap_references: bool = True,
+    ) -> None:
+        """Initialise the source-based metric.
+
+        Args:
+            name:
+                The name of the metric in snake_case.
+            pretty_name:
+                The pretty name of the metric, used for display purposes.
+            huggingface_id:
+                The Hugging Face ID of the metric.
+            results_key:
+                The name of the key used to extract the metric scores from the results
+                dictionary.
+            compute_kwargs:
+                Keyword arguments to pass to the metric's compute function.
+            postprocessing_fn:
+                A function to apply to the metric scores after they are computed.
+            wrap_references:
+                Whether references should be wrapped in a list (e.g. [[ref], ...]).
+        """
+        super().__init__(
+            name=name,
+            pretty_name=pretty_name,
+            huggingface_id=huggingface_id,
+            results_key=results_key,
+            compute_kwargs=compute_kwargs,
+            postprocessing_fn=postprocessing_fn,
+        )
+        self.wrap_references = wrap_references
+
     def __call__(
         self,
         predictions: c.Sequence,
@@ -208,7 +247,7 @@ class SourceBasedMetric(HuggingFaceMetric):
             )
 
         references_arg = _maybe_wrap_references(
-            references=references, wrap_references=True
+            references=references, wrap_references=self.wrap_references
         )
         with no_terminal_output(disable=os.getenv("FULL_LOG", "0") == "1"):
             results = self.metric.compute(
@@ -292,7 +331,6 @@ class WrappedReferencesMetric(HuggingFaceMetric):
             score = float(score)
 
         return score
-
 
 mcc_metric = HuggingFaceMetric(
     name="mcc",

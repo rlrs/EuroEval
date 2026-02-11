@@ -180,6 +180,38 @@ from .languages import get_all_languages
     "generative.",
 )
 @click.option(
+    "--vllm-tp",
+    "vllm_tensor_parallel_size",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM tensor parallel size for the main model.",
+)
+@click.option(
+    "--vllm-pp",
+    "vllm_pipeline_parallel_size",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM pipeline parallel size for the main model.",
+)
+@click.option(
+    "--judge-vllm-tp",
+    "judge_vllm_tensor_parallel_size",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM tensor parallel size for judge models.",
+)
+@click.option(
+    "--judge-vllm-pp",
+    "judge_vllm_pipeline_parallel_size",
+    default=None,
+    type=int,
+    show_default=True,
+    help="Override vLLM pipeline parallel size for judge models.",
+)
+@click.option(
     "--requires-safetensors",
     is_flag=True,
     help="Only allow loading models that have safetensors weights available",
@@ -264,6 +296,10 @@ def benchmark(
     api_version: str | None,
     gpu_memory_utilization: float,
     attention_backend: str,
+    vllm_tensor_parallel_size: int | None,
+    vllm_pipeline_parallel_size: int | None,
+    judge_vllm_tensor_parallel_size: int | None,
+    judge_vllm_pipeline_parallel_size: int | None,
     requires_safetensors: bool,
     generative_type: str | None,
     custom_datasets_file: Path,
@@ -296,6 +332,10 @@ def benchmark(
         api_version=api_version,
         gpu_memory_utilization=gpu_memory_utilization,
         attention_backend=attention_backend,
+        vllm_tensor_parallel_size=vllm_tensor_parallel_size,
+        vllm_pipeline_parallel_size=vllm_pipeline_parallel_size,
+        judge_vllm_tensor_parallel_size=judge_vllm_tensor_parallel_size,
+        judge_vllm_pipeline_parallel_size=judge_vllm_pipeline_parallel_size,
         generative_type=GenerativeType[generative_type.upper()]
         if generative_type
         else None,

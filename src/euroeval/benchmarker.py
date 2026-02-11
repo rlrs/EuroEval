@@ -78,6 +78,10 @@ class Benchmarker:
         attention_backend: t.Literal[
             *ATTENTION_BACKENDS  # pyrefly: ignore[invalid-literal]
         ] = "FLASHINFER",
+        vllm_tensor_parallel_size: int | None = None,
+        vllm_pipeline_parallel_size: int | None = None,
+        judge_vllm_tensor_parallel_size: int | None = None,
+        judge_vllm_pipeline_parallel_size: int | None = None,
         generative_type: GenerativeType | None = None,
         custom_datasets_file: Path | str = Path("custom_datasets.py"),
         debug: bool = False,
@@ -151,6 +155,14 @@ class Benchmarker:
             attention_backend:
                 The attention backend to use for vLLM. Defaults to FLASHINFER. Only
                 relevant if the model is generative.
+            vllm_tensor_parallel_size:
+                Optional override for vLLM tensor parallel size for the main model.
+            vllm_pipeline_parallel_size:
+                Optional override for vLLM pipeline parallel size for the main model.
+            judge_vllm_tensor_parallel_size:
+                Optional override for vLLM tensor parallel size for judge models.
+            judge_vllm_pipeline_parallel_size:
+                Optional override for vLLM pipeline parallel size for judge models.
             generative_type:
                 The type of generative model to benchmark. Only relevant if the model is
                 generative. If not specified, then the type will be inferred based on
@@ -267,6 +279,10 @@ class Benchmarker:
             download_only=download_only,
             gpu_memory_utilization=gpu_memory_utilization,
             attention_backend=attention_backend,
+            vllm_tensor_parallel_size=vllm_tensor_parallel_size,
+            vllm_pipeline_parallel_size=vllm_pipeline_parallel_size,
+            judge_vllm_tensor_parallel_size=judge_vllm_tensor_parallel_size,
+            judge_vllm_pipeline_parallel_size=judge_vllm_pipeline_parallel_size,
             generative_type=generative_type,
             custom_datasets_file=Path(custom_datasets_file),
             verbose=verbose,
@@ -389,6 +405,10 @@ class Benchmarker:
         requires_safetensors: bool | None = None,
         download_only: bool | None = None,
         gpu_memory_utilization: float | None = None,
+        vllm_tensor_parallel_size: int | None = None,
+        vllm_pipeline_parallel_size: int | None = None,
+        judge_vllm_tensor_parallel_size: int | None = None,
+        judge_vllm_pipeline_parallel_size: int | None = None,
         generative_type: GenerativeType | None = None,
         attention_backend: t.Literal[
             *ATTENTION_BACKENDS  # pyrefly: ignore[invalid-literal]
@@ -646,6 +666,26 @@ class Benchmarker:
                 gpu_memory_utilization
                 if gpu_memory_utilization is not None
                 else self.benchmark_config_default_params.gpu_memory_utilization
+            ),
+            vllm_tensor_parallel_size=(
+                vllm_tensor_parallel_size
+                if vllm_tensor_parallel_size is not None
+                else self.benchmark_config_default_params.vllm_tensor_parallel_size
+            ),
+            vllm_pipeline_parallel_size=(
+                vllm_pipeline_parallel_size
+                if vllm_pipeline_parallel_size is not None
+                else self.benchmark_config_default_params.vllm_pipeline_parallel_size
+            ),
+            judge_vllm_tensor_parallel_size=(
+                judge_vllm_tensor_parallel_size
+                if judge_vllm_tensor_parallel_size is not None
+                else self.benchmark_config_default_params.judge_vllm_tensor_parallel_size
+            ),
+            judge_vllm_pipeline_parallel_size=(
+                judge_vllm_pipeline_parallel_size
+                if judge_vllm_pipeline_parallel_size is not None
+                else self.benchmark_config_default_params.judge_vllm_pipeline_parallel_size
             ),
             generative_type=(
                 generative_type

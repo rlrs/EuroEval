@@ -101,6 +101,9 @@ MT = Task(
     template_dict=MT_TEMPLATES,
     metrics=[
         m.bert_score_metric,
+        m.translation_quality_metric,
+        m.fluency_metric,
+        m.comet_metric,
         m.sacrebleu_metric,
     ],
     default_num_few_shot_examples=5,
