@@ -7,6 +7,8 @@ import logging
 import os
 import re
 import typing as t
+import urllib.error
+import urllib.request
 from copy import deepcopy
 from functools import cached_property, partial
 from time import sleep
@@ -279,6 +281,20 @@ class LiteLLMModel(BenchmarkModule):
         self.buffer["max_concurrent_calls"] = max(
             1, self.benchmark_config.max_concurrent_calls
         )
+        self.buffer["concurrency_mode"] = self.benchmark_config.concurrency_mode
+        self.buffer["vllm_metrics_url"] = self._resolve_vllm_metrics_url()
+        self.buffer["adaptive_enabled"] = False
+        if self.buffer["concurrency_mode"] == "adaptive":
+            metrics = self._fetch_vllm_metrics()
+            if metrics is None:
+                self.buffer["concurrency_mode"] = "fixed"
+                log_once(
+                    "Adaptive concurrency requested, but vLLM metrics are not "
+                    "available. Falling back to fixed concurrency.",
+                    level=logging.WARNING,
+                )
+            else:
+                self.buffer["adaptive_enabled"] = True
 
     @property
     def generative_type(self) -> GenerativeType | None:
@@ -381,6 +397,9 @@ class LiteLLMModel(BenchmarkModule):
                     **generation_kwargs,
                 )
             )
+            all_failures = list(failures)
+
+            self._maybe_update_adaptive_concurrency(had_failures=bool(all_failures))
 
             # Store the successful model outputs
             for idx, response in successes:
@@ -458,6 +477,119 @@ class LiteLLMModel(BenchmarkModule):
             )
 
         return model_output
+
+    def _maybe_update_adaptive_concurrency(self, had_failures: bool) -> None:
+        """Update concurrency adaptively when vLLM metrics are available.
+
+        Args:
+            had_failures:
+                Whether the latest request round had one or more failures.
+        """
+        if not self.buffer["adaptive_enabled"]:
+            return
+
+        metrics = self._fetch_vllm_metrics()
+        if metrics is None:
+            self.buffer["adaptive_enabled"] = False
+            self.buffer["concurrency_mode"] = "fixed"
+            log_once(
+                "Adaptive concurrency disabled because vLLM metrics became "
+                "unavailable. Continuing in fixed mode.",
+                level=logging.WARNING,
+            )
+            return
+
+        current_limit = int(self.buffer["max_concurrent_calls"])
+        max_limit = max(1, self.benchmark_config.max_concurrent_calls)
+        waiting = int(metrics["waiting"])
+        running = int(metrics["running"])
+
+        # Back off when we observe failures or queue pressure.
+        if had_failures or waiting > 0:
+            new_limit = max(1, current_limit - 1)
+            if new_limit < current_limit:
+                self.buffer["max_concurrent_calls"] = new_limit
+                log(
+                    "Adaptive concurrency reduced max concurrent calls to "
+                    f"{new_limit:,} (running={running:,}, waiting={waiting:,}).",
+                    level=logging.DEBUG,
+                )
+            return
+
+        # Increase conservatively when we appear to saturate current concurrency.
+        if running >= current_limit and current_limit < max_limit:
+            new_limit = current_limit + 1
+            self.buffer["max_concurrent_calls"] = new_limit
+            log(
+                "Adaptive concurrency increased max concurrent calls to "
+                f"{new_limit:,} (running={running:,}, waiting={waiting:,}).",
+                level=logging.DEBUG,
+            )
+
+    def _resolve_vllm_metrics_url(self) -> str | None:
+        """Resolve the vLLM metrics endpoint URL.
+
+        Returns:
+            The resolved vLLM `/metrics` URL, or None if it cannot be inferred.
+        """
+        if self.benchmark_config.vllm_metrics_url is not None:
+            return self.benchmark_config.vllm_metrics_url.rstrip("/")
+        if self.benchmark_config.api_base is None:
+            return None
+
+        api_base = self.benchmark_config.api_base.rstrip("/")
+        return re.sub(r"/v1/?$", "", api_base) + "/metrics"
+
+    def _fetch_vllm_metrics(self) -> dict[str, float] | None:
+        """Fetch selected vLLM metrics required for adaptive concurrency.
+
+        Returns:
+            A dictionary containing `running` and `waiting`, or None if unavailable.
+        """
+        metrics_url = self.buffer["vllm_metrics_url"]
+        if metrics_url is None:
+            return None
+
+        try:
+            with urllib.request.urlopen(metrics_url, timeout=1.0) as response:
+                metrics_text = response.read().decode("utf-8", errors="replace")
+        except (TimeoutError, urllib.error.URLError, OSError):
+            return None
+
+        running = self._extract_prometheus_metric_value(
+            metrics_text=metrics_text, metric_name="vllm:num_requests_running"
+        )
+        waiting = self._extract_prometheus_metric_value(
+            metrics_text=metrics_text, metric_name="vllm:num_requests_waiting"
+        )
+        if running is None or waiting is None:
+            return None
+
+        return dict(running=running, waiting=waiting)
+
+    @staticmethod
+    def _extract_prometheus_metric_value(
+        metrics_text: str, metric_name: str
+    ) -> float | None:
+        """Extract a scalar Prometheus metric from metrics text.
+
+        Args:
+            metrics_text:
+                Prometheus text exposition payload.
+            metric_name:
+                The metric name to parse.
+
+        Returns:
+            The metric value, or None if not found.
+        """
+        match = re.search(
+            pattern=rf"^{re.escape(metric_name)}(?:\{{.*\}})? ([0-9.eE+-]+)$",
+            string=metrics_text,
+            flags=re.MULTILINE,
+        )
+        if match is None:
+            return None
+        return float(match.group(1))
 
     def _handle_exception(
         self, error: Exception, **generation_kwargs

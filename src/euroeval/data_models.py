@@ -739,6 +739,10 @@ class BenchmarkConfig:
         max_concurrent_calls:
             The maximum number of concurrent API calls allowed for LiteLLM-backed
             inference.
+        concurrency_mode:
+            The concurrency control mode for LiteLLM-backed inference.
+        vllm_metrics_url:
+            Optional override URL for the vLLM `/metrics` endpoint.
     """
 
     datasets: c.Sequence[DatasetConfig]
@@ -769,6 +773,8 @@ class BenchmarkConfig:
     debug: bool
     run_with_cli: bool
     max_concurrent_calls: int = 20
+    concurrency_mode: t.Literal["fixed", "adaptive"] = "fixed"
+    vllm_metrics_url: str | None = None
 
     @property
     def tasks(self) -> c.Sequence[Task]:
@@ -820,6 +826,8 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     debug: bool
     run_with_cli: bool
     max_concurrent_calls: int = 20
+    concurrency_mode: t.Literal["fixed", "adaptive"] = "fixed"
+    vllm_metrics_url: str | None = None
 
 
 class BenchmarkResult(pydantic.BaseModel):

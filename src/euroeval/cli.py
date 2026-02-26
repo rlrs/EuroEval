@@ -172,6 +172,20 @@ from .languages import get_all_languages
     "inference.",
 )
 @click.option(
+    "--concurrency-mode",
+    default="fixed",
+    show_default=True,
+    type=click.Choice(["fixed", "adaptive"], case_sensitive=False),
+    help="Concurrency control mode for LiteLLM-backed inference.",
+)
+@click.option(
+    "--vllm-metrics-url",
+    default=None,
+    show_default=True,
+    help="Optional override URL to the vLLM `/metrics` endpoint used for adaptive "
+    "concurrency.",
+)
+@click.option(
     "--gpu-memory-utilization",
     default=0.8,
     show_default=True,
@@ -271,6 +285,8 @@ def benchmark(
     api_base: str | None,
     api_version: str | None,
     max_concurrent_calls: int,
+    concurrency_mode: str,
+    vllm_metrics_url: str | None,
     gpu_memory_utilization: float,
     attention_backend: str,
     requires_safetensors: bool,
@@ -304,6 +320,8 @@ def benchmark(
         api_base=api_base,
         api_version=api_version,
         max_concurrent_calls=max_concurrent_calls,
+        concurrency_mode=concurrency_mode.lower(),
+        vllm_metrics_url=vllm_metrics_url,
         gpu_memory_utilization=gpu_memory_utilization,
         attention_backend=attention_backend,
         generative_type=GenerativeType[generative_type.upper()]

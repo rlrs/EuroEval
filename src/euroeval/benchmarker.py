@@ -75,6 +75,8 @@ class Benchmarker:
         api_base: str | None = None,
         api_version: str | None = None,
         max_concurrent_calls: int = 20,
+        concurrency_mode: t.Literal["fixed", "adaptive"] = "fixed",
+        vllm_metrics_url: str | None = None,
         gpu_memory_utilization: float = 0.8,
         attention_backend: t.Literal[
             *ATTENTION_BACKENDS  # pyrefly: ignore[invalid-literal]
@@ -147,6 +149,12 @@ class Benchmarker:
             max_concurrent_calls:
                 The maximum number of concurrent API calls allowed for LiteLLM-backed
                 inference. Defaults to 20.
+            concurrency_mode:
+                The concurrency control mode for LiteLLM-backed inference. Defaults to
+                "fixed".
+            vllm_metrics_url:
+                Optional override URL for the vLLM `/metrics` endpoint. Defaults to
+                None.
             gpu_memory_utilization:
                 The GPU memory utilization to use for vLLM. Only relevant if the model
                 is generative. A larger value will result in faster evaluation, but at
@@ -261,6 +269,8 @@ class Benchmarker:
             api_base=api_base,
             api_version=api_version,
             max_concurrent_calls=max_concurrent_calls,
+            concurrency_mode=concurrency_mode,
+            vllm_metrics_url=vllm_metrics_url,
             trust_remote_code=trust_remote_code,
             clear_model_cache=clear_model_cache,
             evaluate_test_split=evaluate_test_split,
@@ -385,6 +395,8 @@ class Benchmarker:
         api_base: str | None = None,
         api_version: str | None = None,
         max_concurrent_calls: int | None = None,
+        concurrency_mode: t.Literal["fixed", "adaptive"] | None = None,
+        vllm_metrics_url: str | None = None,
         trust_remote_code: bool | None = None,
         clear_model_cache: bool | None = None,
         evaluate_test_split: bool | None = None,
@@ -459,6 +471,12 @@ class Benchmarker:
                 The maximum number of concurrent API calls allowed for LiteLLM-backed
                 inference. Defaults to the value specified when initialising the
                 benchmarker.
+            concurrency_mode:
+                The concurrency control mode for LiteLLM-backed inference. Defaults to
+                the value specified when initialising the benchmarker.
+            vllm_metrics_url:
+                Optional override URL for the vLLM `/metrics` endpoint. Defaults to
+                the value specified when initialising the benchmarker.
             trust_remote_code:
                 Whether to trust remote code when loading models. Defaults to the value
                 specified when initialising the benchmarker.
@@ -626,6 +644,16 @@ class Benchmarker:
                 max_concurrent_calls
                 if max_concurrent_calls is not None
                 else self.benchmark_config_default_params.max_concurrent_calls
+            ),
+            concurrency_mode=(
+                concurrency_mode
+                if concurrency_mode is not None
+                else self.benchmark_config_default_params.concurrency_mode
+            ),
+            vllm_metrics_url=(
+                vllm_metrics_url
+                if vllm_metrics_url is not None
+                else self.benchmark_config_default_params.vllm_metrics_url
             ),
             trust_remote_code=(
                 trust_remote_code

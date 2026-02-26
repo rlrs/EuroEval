@@ -92,6 +92,8 @@ def build_benchmark_config(
         requires_safetensors=benchmark_config_params.requires_safetensors,
         download_only=benchmark_config_params.download_only,
         max_concurrent_calls=benchmark_config_params.max_concurrent_calls,
+        concurrency_mode=benchmark_config_params.concurrency_mode,
+        vllm_metrics_url=benchmark_config_params.vllm_metrics_url,
     )
 
 
