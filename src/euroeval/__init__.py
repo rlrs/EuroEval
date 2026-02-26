@@ -34,13 +34,21 @@ logging.basicConfig(
 # Check for incompatible packages ###
 
 # Throw informative error if `flash_attn` is installed ###
+allow_flash_attn = os.getenv("EUROEVAL_ALLOW_FLASH_ATTN", "0") == "1"
 if importlib.util.find_spec("flash_attn") is not None:
-    logging.critical(
-        "The `flash_attn` package is not supported by EuroEval, as it is now built "
-        "into the other packages and it conflicts with the other implementations. "
-        "Please uninstall it using `pip uninstall flash_attn` and try again."
-    )
-    sys.exit(1)
+    if allow_flash_attn:
+        logging.warning(
+            "The `flash_attn` package is installed and may conflict with other "
+            "implementations, but continuing because EUROEVAL_ALLOW_FLASH_ATTN=1."
+        )
+    else:
+        logging.critical(
+            "The `flash_attn` package is not supported by EuroEval, as it is now built "
+            "into the other packages and it conflicts with the other "
+            "implementations. Please uninstall it using `pip uninstall flash_attn` "
+            "and try again. To bypass this check, set EUROEVAL_ALLOW_FLASH_ATTN=1."
+        )
+        sys.exit(1)
 
 
 # STAGE 3 ###
