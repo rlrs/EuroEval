@@ -34,7 +34,14 @@ def build_benchmark_config(
 
     Returns:
         The benchmark configuration.
+
+    Raises:
+        ValueError:
+            If the concurrency setting is invalid.
     """
+    if benchmark_config_params.max_concurrent_calls < 1:
+        raise ValueError("`max_concurrent_calls` must be at least 1.")
+
     language_codes = get_correct_language_codes(
         language_codes=benchmark_config_params.language
     )
@@ -84,6 +91,7 @@ def build_benchmark_config(
         run_with_cli=benchmark_config_params.run_with_cli,
         requires_safetensors=benchmark_config_params.requires_safetensors,
         download_only=benchmark_config_params.download_only,
+        max_concurrent_calls=benchmark_config_params.max_concurrent_calls,
     )
 
 

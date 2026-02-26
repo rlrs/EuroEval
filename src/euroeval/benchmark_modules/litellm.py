@@ -276,7 +276,9 @@ class LiteLLMModel(BenchmarkModule):
             generative_type=self.generative_type,
             log_metadata=self.log_metadata,
         )
-        self.buffer["max_concurrent_calls"] = 20
+        self.buffer["max_concurrent_calls"] = max(
+            1, self.benchmark_config.max_concurrent_calls
+        )
 
     @property
     def generative_type(self) -> GenerativeType | None:

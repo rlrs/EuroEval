@@ -164,6 +164,14 @@ from .languages import get_all_languages
     "an inference API.",
 )
 @click.option(
+    "--max-concurrent-calls",
+    default=20,
+    show_default=True,
+    type=click.IntRange(min=1),
+    help="The maximum number of concurrent API requests to issue for LiteLLM-backed "
+    "inference.",
+)
+@click.option(
     "--gpu-memory-utilization",
     default=0.8,
     show_default=True,
@@ -262,6 +270,7 @@ def benchmark(
     num_iterations: int,
     api_base: str | None,
     api_version: str | None,
+    max_concurrent_calls: int,
     gpu_memory_utilization: float,
     attention_backend: str,
     requires_safetensors: bool,
@@ -294,6 +303,7 @@ def benchmark(
         num_iterations=num_iterations,
         api_base=api_base,
         api_version=api_version,
+        max_concurrent_calls=max_concurrent_calls,
         gpu_memory_utilization=gpu_memory_utilization,
         attention_backend=attention_backend,
         generative_type=GenerativeType[generative_type.upper()]

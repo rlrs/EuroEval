@@ -8,12 +8,13 @@ import pytest
 import torch
 
 from euroeval.benchmark_config_factory import (
+    build_benchmark_config,
     get_correct_language_codes,
     prepare_dataset_configs,
     prepare_device,
     prepare_languages,
 )
-from euroeval.data_models import DatasetConfig, Language
+from euroeval.data_models import BenchmarkConfigParams, DatasetConfig, Language
 from euroeval.dataset_configs import get_all_dataset_configs
 from euroeval.dataset_configs.danish import MULTI_WIKI_QA_DA_CONFIG, SCALA_DA_CONFIG
 from euroeval.enums import Device
@@ -291,3 +292,42 @@ def test_prepare_device(device: Device, expected_device: torch.device) -> None:
     """Test the output of `prepare_device`."""
     prepared_device = prepare_device(device=device)
     assert prepared_device == expected_device
+
+
+def test_build_benchmark_config_invalid_max_concurrency() -> None:
+    """Test that an invalid max concurrency value raises a ValueError."""
+    with pytest.raises(
+        ValueError, match="`max_concurrent_calls` must be at least 1."
+    ):
+        build_benchmark_config(
+            benchmark_config_params=BenchmarkConfigParams(
+                task=None,
+                dataset=None,
+                progress_bar=False,
+                save_results=True,
+                language=["da"],
+                device=Device.CPU,
+                finetuning_batch_size=1,
+                raise_errors=False,
+                cache_dir=".euroeval_cache",
+                api_key=os.getenv("HF_TOKEN"),
+                api_base=None,
+                api_version=None,
+                trust_remote_code=True,
+                clear_model_cache=False,
+                evaluate_test_split=False,
+                few_shot=True,
+                num_iterations=1,
+                requires_safetensors=False,
+                download_only=False,
+                gpu_memory_utilization=0.8,
+                attention_backend="FLASHINFER",
+                generative_type=None,
+                custom_datasets_file=Path("custom_datasets.py"),
+                force=False,
+                verbose=False,
+                debug=False,
+                run_with_cli=True,
+                max_concurrent_calls=0,
+            )
+        )

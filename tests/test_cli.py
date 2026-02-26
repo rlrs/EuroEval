@@ -26,6 +26,7 @@ def test_cli_param_names(cli_params: dict[str, ParamType]) -> None:
         "num_iterations",
         "api_base",
         "api_version",
+        "max_concurrent_calls",
         "gpu_memory_utilization",
         "attention_backend",
         "requires_safetensors",

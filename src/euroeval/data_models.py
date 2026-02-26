@@ -736,6 +736,9 @@ class BenchmarkConfig:
             Whether to run the benchmark in debug mode.
         run_with_cli:
             Whether the benchmark is being run with the CLI.
+        max_concurrent_calls:
+            The maximum number of concurrent API calls allowed for LiteLLM-backed
+            inference.
     """
 
     datasets: c.Sequence[DatasetConfig]
@@ -765,6 +768,7 @@ class BenchmarkConfig:
     verbose: bool
     debug: bool
     run_with_cli: bool
+    max_concurrent_calls: int = 20
 
     @property
     def tasks(self) -> c.Sequence[Task]:
@@ -815,6 +819,7 @@ class BenchmarkConfigParams(pydantic.BaseModel):
     verbose: bool
     debug: bool
     run_with_cli: bool
+    max_concurrent_calls: int = 20
 
 
 class BenchmarkResult(pydantic.BaseModel):

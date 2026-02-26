@@ -74,6 +74,7 @@ class Benchmarker:
         num_iterations: int = 10,
         api_base: str | None = None,
         api_version: str | None = None,
+        max_concurrent_calls: int = 20,
         gpu_memory_utilization: float = 0.8,
         attention_backend: t.Literal[
             *ATTENTION_BACKENDS  # pyrefly: ignore[invalid-literal]
@@ -143,6 +144,9 @@ class Benchmarker:
                 to a model on an inference API. Defaults to None.
             api_version:
                 The version of the API to use. Defaults to None.
+            max_concurrent_calls:
+                The maximum number of concurrent API calls allowed for LiteLLM-backed
+                inference. Defaults to 20.
             gpu_memory_utilization:
                 The GPU memory utilization to use for vLLM. Only relevant if the model
                 is generative. A larger value will result in faster evaluation, but at
@@ -256,6 +260,7 @@ class Benchmarker:
             api_key=api_key,
             api_base=api_base,
             api_version=api_version,
+            max_concurrent_calls=max_concurrent_calls,
             trust_remote_code=trust_remote_code,
             clear_model_cache=clear_model_cache,
             evaluate_test_split=evaluate_test_split,
@@ -379,6 +384,7 @@ class Benchmarker:
         api_key: str | None = None,
         api_base: str | None = None,
         api_version: str | None = None,
+        max_concurrent_calls: int | None = None,
         trust_remote_code: bool | None = None,
         clear_model_cache: bool | None = None,
         evaluate_test_split: bool | None = None,
@@ -449,6 +455,10 @@ class Benchmarker:
             api_version:
                 The version of the API to use. Defaults to the value specified when
                 initialising the benchmarker.
+            max_concurrent_calls:
+                The maximum number of concurrent API calls allowed for LiteLLM-backed
+                inference. Defaults to the value specified when initialising the
+                benchmarker.
             trust_remote_code:
                 Whether to trust remote code when loading models. Defaults to the value
                 specified when initialising the benchmarker.
@@ -611,6 +621,11 @@ class Benchmarker:
                 api_version
                 if api_version is not None
                 else self.benchmark_config_default_params.api_version
+            ),
+            max_concurrent_calls=(
+                max_concurrent_calls
+                if max_concurrent_calls is not None
+                else self.benchmark_config_default_params.max_concurrent_calls
             ),
             trust_remote_code=(
                 trust_remote_code
